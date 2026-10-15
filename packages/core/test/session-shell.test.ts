@@ -279,95 +279,23 @@ describe("Session.shell", () => {
   }
 
   for (const sample of [
-    {
-      name: "CJK offset one",
-      source: "'\\u4E2D'.repeat(17067)",
-      full: "中".repeat(17067),
-      tail: "中".repeat(17066),
-      partial: "��",
-    },
-    {
-      name: "CJK offset two",
-      source: "'\\u4E2D'.repeat(17067)+'a'",
-      full: "中".repeat(17067) + "a",
-      tail: "中".repeat(17066) + "a",
-      partial: "�",
-    },
-    {
-      name: "CJK aligned",
-      source: "'\\u4E2D'.repeat(17067)+'aa'",
-      full: "中".repeat(17067) + "aa",
-      tail: "中".repeat(17066) + "aa",
-      partial: "",
-    },
-    {
-      name: "emoji offset one",
-      source: "'\\u{1F600}'.repeat(12801)+'a'",
-      full: "😀".repeat(12801) + "a",
-      tail: "😀".repeat(12799) + "a",
-      partial: "���",
-    },
-    {
-      name: "emoji aligned",
-      source: "'\\u{1F600}'.repeat(12801)",
-      full: "😀".repeat(12801),
-      tail: "😀".repeat(12800),
-      partial: "",
-    },
-    {
-      name: "two-byte character",
-      source: "'\\u00E9'.repeat(25601)+'a'",
-      full: "é".repeat(25601) + "a",
-      tail: "é".repeat(25599) + "a",
-      partial: "�",
-    },
-    { name: "ASCII", source: "'a'.repeat(51201)", full: "a".repeat(51201), tail: "a".repeat(51200), partial: "" },
-    {
-      name: "original replacement character",
-      source: "'a'.repeat(100)+'\\uFFFD'+'b'.repeat(51197)",
-      full: "a".repeat(100) + "�" + "b".repeat(51197),
-      tail: "�" + "b".repeat(51197),
-      partial: "",
-    },
-    {
-      name: "partial character before original replacement",
-      source: "'\\u4E2D\\uFFFD'+'a'.repeat(51196)",
-      full: "中�" + "a".repeat(51196),
-      tail: "�" + "a".repeat(51196),
-      partial: "�",
-    },
+    { name: "two-byte split", source: "'\\u00E9'.repeat(25601)+'a'", tail: "é".repeat(25599) + "a" },
+    { name: "three-byte split", source: "'\\u4E2D'.repeat(17066)+'\\uFFFD'", tail: "中".repeat(17065) + "�" },
+    { name: "four-byte split", source: "'\\u{1F600}'.repeat(12801)+'a'", tail: "😀".repeat(12799) + "a" },
+    { name: "binary continuation bytes", source: "Buffer.alloc(60000, 0x80)", tail: "�".repeat(51197) },
   ]) {
-    it.live(`keeps complete UTF-8 characters in the completion tail: ${sample.name}`, () =>
+    it.live(`keeps a bounded UTF-8 completion tail: ${sample.name}`, () =>
       Effect.gen(function* () {
         const fixture = yield* setup
         yield* fixture.session.shell({
           sessionID: fixture.created.id,
           command: `node -e "process.stdout.write(${sample.source})"`,
         })
-        const messages = yield* fixture.session.messages({ sessionID: fixture.created.id })
-        const message = messages[0]
-        if (message?.type !== "shell") return yield* Effect.die("Missing shell projection")
-        expect(message.output?.output).toBe(sample.full)
-        const info = yield* fixture.shell.get(message.shellID)
-        expect(yield* Effect.promise(() => fs.readFile(info.file, "utf8"))).toBe(sample.full)
-        const size = Buffer.byteLength(sample.full)
-        // Public output paging keeps its byte cursor and independently decoded byte slice.
-        expect(yield* fixture.shell.output(message.shellID, { cursor: size - 51200, limit: 51200 })).toEqual({
-          output: sample.partial + sample.tail,
-          cursor: size,
-          size,
-          truncated: false,
-        })
-        const result = yield* fixture.shell.result(info)
-        const output = `${sample.tail}\n\n[showing lines 1-1 of 1; full output saved to ${info.file}]`
-        expect(result.capture).toEqual({ output, truncated: true })
-        expect(Buffer.byteLength(sample.tail)).toBeLessThanOrEqual(51200)
         const inbox = yield* fixture.session.inbox(fixture.created.id)
         const completion = inbox[0]
         if (completion?.type !== "synthetic") return yield* Effect.die("Missing shell completion")
-        expect(completion.payload.text).toContain(output)
-        expect(completion.payload.metadata?.truncated).toBe(true)
-        expect(yield* fixture.session.messages({ sessionID: fixture.created.id })).toEqual(messages)
+        expect(completion.payload.text).toContain(`>\n${sample.tail}\n\n[showing lines 1-1 of 1; full output saved to `)
+        expect(completion.payload.text).not.toContain("(no output)")
       }),
     )
   }

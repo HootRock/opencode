@@ -222,9 +222,9 @@ const layer = () =>
             }),
         )
         let offset = 0
-        // A completion tail can start inside a character; public byte paging keeps its original semantics.
+        // A split UTF-8 character leaves at most three continuation bytes; retain any further binary output.
         if (trimPartialCharacter && start > 0) {
-          while (offset < bytesRead && (buffer[offset]! & 0xc0) === 0x80) offset++
+          while (offset < Math.min(3, bytesRead) && (buffer[offset]! & 0xc0) === 0x80) offset++
         }
         return {
           output: buffer.subarray(offset, bytesRead).toString("utf8"),

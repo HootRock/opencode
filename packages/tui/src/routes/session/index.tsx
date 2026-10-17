@@ -1140,9 +1140,15 @@ export function Session(props: {
         name: "copy",
       },
       run: () => {
-        const lastAssistantMessage = messagesBeforeRevert().findLast(
-          (msg) => msg.type === "assistant" || (msg.type === "compaction" && msg.status === "completed" && msg.summary.trim() !== ""),
-        )
+        const messages = messagesBeforeRevert()
+        const lastAssistantMessage = messages
+          .slice(messages.findLastIndex((msg) => msg.type === "user") + 1)
+          .findLast(
+            (msg) =>
+              (msg.type === "assistant" &&
+                msg.content.some((part) => part.type === "text" && part.text.trim() !== "")) ||
+              (msg.type === "compaction" && msg.status === "completed" && msg.summary.trim() !== ""),
+          )
         if (!lastAssistantMessage) {
           toast.show({ message: "No assistant messages found", variant: "error" })
           dialog.clear()

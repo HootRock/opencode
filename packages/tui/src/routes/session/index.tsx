@@ -1150,7 +1150,7 @@ export function Session(props: {
               (msg.type === "compaction" && msg.status === "completed" && msg.summary.trim() !== ""),
           )
         if (!lastAssistantMessage) {
-          toast.show({ message: "No assistant messages found", variant: "error" })
+          toast.show({ message: "No reply text found in the last turn", variant: "error" })
           dialog.clear()
           return
         }
@@ -1165,15 +1165,6 @@ export function Session(props: {
             : lastAssistantMessage.type === "compaction" && lastAssistantMessage.status === "completed"
               ? lastAssistantMessage.summary.trim()
               : ""
-        if (!text) {
-          toast.show({
-            message: "No text content found in last assistant message",
-            variant: "error",
-          })
-          dialog.clear()
-          return
-        }
-
         clipboard
           .write(text)
           .then(() => toast.show({ message: "Message copied to clipboard!", variant: "success" }))

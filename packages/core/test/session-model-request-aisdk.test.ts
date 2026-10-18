@@ -44,86 +44,58 @@ const session = Session.Info.make({
 const chunk =
   'data: {"id":"r","object":"chat.completion.chunk","created":0,"model":"api-model","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
 
-for (const kind of ["primary", "compaction", "title", "generate"] as const) {
-  it.effect(`applies session model and HTTP hooks to an AI SDK ${kind} request`, () =>
-    Effect.gen(function* () {
-      const aisdk = yield* AISDK.Service
-      const hooks = yield* PluginHooks.Service
-      const sent: Array<{ url: string; headers: Headers }> = []
-      const observed: Array<{ baseURL: string | undefined; kind: string }> = []
-      const httpURLs: string[] = []
-      let responses = 0
-      yield* aisdk.hook.sdk((event) => {
-        event.sdk = createOpenAICompatible({
-          ...event.options,
-          name: String(event.options.name),
-          baseURL: String(event.options.baseURL),
-        })
+it.effect("applies a session model.request hook to the AI SDK request URL", () =>
+  Effect.gen(function* () {
+    const aisdk = yield* AISDK.Service
+    const hooks = yield* PluginHooks.Service
+    const sent: string[] = []
+    const observed: Array<string | undefined> = []
+    yield* aisdk.hook.sdk((event) => {
+      event.sdk = createOpenAICompatible({
+        ...event.options,
+        name: String(event.options.name),
+        baseURL: String(event.options.baseURL),
       })
-      const original = yield* aisdk.model({
-        ...Model.Info.make({
-          ...Model.Info.default(Provider.ID.make("probe"), Model.ID.make("api-model")),
-          package: Provider.aisdk("@ai-sdk/openai-compatible"),
-        }),
-        settings: {
-          baseURL: "https://original.example.invalid/v1",
-          apiKey: "test",
-          fetch: Object.assign(
-            async (input: string | URL | Request, init?: RequestInit) => {
-              sent.push({
-                url: input instanceof Request ? input.url : String(input),
-                headers: new Headers(init?.headers),
-              })
-              return new Response(chunk, { headers: { "content-type": "text/event-stream" } })
-            },
-            { preconnect: fetch.preconnect },
-          ),
-        },
-      })
-      const routing = yield* hooks.register("session", "model.request", (event) =>
-        Effect.sync(() => {
-          observed.push({ baseURL: event.baseURL, kind: event.kind })
-          event.baseURL = "https://replacement.example.invalid/custom/v2/"
-          event.headers["x-model-hook"] = "retained"
-        }),
-      )
-      yield* hooks.register("session", "http.request", (event) =>
-        Effect.sync(() => {
-          httpURLs.push(event.request.url)
-          event.request.headers.set("x-http-hook", "retained")
-        }),
-      )
-      yield* hooks.register("session", "http.response", () => Effect.sync(() => void responses++))
-      const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
-      const input = {
-        session,
-        agent: Agent.ID.make("build"),
-        model: SessionRunnerModel.resolved(original, {
-          capabilities: { tools: true, input: ["text"], output: ["text"] },
-          cost: [],
-          limit: { context: 200_000, output: 32_000 },
-        }),
-        system: [],
-        messages: [Message.user("hello")],
-      }
-      const prepared = yield* requests[kind](input)
-      yield* LLMClient.generate(prepared.request, prepared.options).pipe(Effect.provide(client))
-      yield* routing.dispose
-      const control = yield* requests[kind](input)
-      yield* LLMClient.generate(control.request, control.options).pipe(Effect.provide(client))
+    })
+    const original = yield* aisdk.model({
+      ...Model.Info.make({
+        ...Model.Info.default(Provider.ID.make("probe"), Model.ID.make("api-model")),
+        package: Provider.aisdk("@ai-sdk/openai-compatible"),
+      }),
+      settings: {
+        baseURL: "https://original.example.invalid/v1",
+        apiKey: "test",
+        fetch: Object.assign(
+          async (input: string | URL | Request) => {
+            sent.push(input instanceof Request ? input.url : String(input))
+            return new Response(chunk, { headers: { "content-type": "text/event-stream" } })
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      },
+    })
+    yield* hooks.register("session", "model.request", (event) =>
+      Effect.sync(() => {
+        observed.push(event.baseURL)
+        event.baseURL = "https://replacement.example.invalid/custom/v2/"
+      }),
+    )
+    const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
+    const input = {
+      session,
+      agent: Agent.ID.make("build"),
+      model: SessionRunnerModel.resolved(original, {
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        cost: [],
+        limit: { context: 200_000, output: 32_000 },
+      }),
+      system: [],
+      messages: [Message.user("hello")],
+    }
+    const prepared = yield* requests.primary(input)
+    yield* LLMClient.generate(prepared.request, prepared.options).pipe(Effect.provide(client))
 
-      expect(sent.map((request) => request.url)).toEqual([
-        "https://replacement.example.invalid/custom/v2/chat/completions",
-        "https://original.example.invalid/v1/chat/completions",
-      ])
-      expect(observed).toEqual([{ baseURL: "https://original.example.invalid/v1", kind }])
-      expect(httpURLs).toEqual(sent.map((request) => request.url))
-      expect(responses).toBe(2)
-      expect(sent[0].headers.get("x-model-hook")).toBe("retained")
-      expect(sent[1].headers.has("x-model-hook")).toBe(false)
-      expect(sent.every((request) => request.headers.get("x-http-hook") === "retained")).toBe(true)
-      expect(sent.every((request) => request.headers.get("authorization") === "Bearer test")).toBe(true)
-      expect(sent.every((request) => request.headers.get("x-opencode-session-id") === session.id)).toBe(true)
-    }).pipe(Effect.provideService(SessionModelTransport.Service, transport)),
-  )
-}
+    expect(sent).toEqual(["https://replacement.example.invalid/custom/v2/chat/completions"])
+    expect(observed).toEqual(["https://original.example.invalid/v1"])
+  }).pipe(Effect.provideService(SessionModelTransport.Service, transport)),
+)

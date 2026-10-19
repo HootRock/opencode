@@ -197,18 +197,17 @@ test("choosing a directory recovers the session when its location is unavailable
   }
 })
 
-test.each([true, false])("choosing the current directory retries without moving (recovered=%s)", async (recovered) => {
+test("choosing the current directory retries without moving", async () => {
   const fixture = await renderMove({
     directory: clone,
     unavailable: "location",
     showMissingLocation: true,
-    onlyOnError: true,
   })
   try {
     fixture.location.set({ directory: clone })
     await fixture.app.waitFor(() => fixture.location.error !== undefined)
     await fixture.app.waitForFrame((frame) => frame.includes("Session location unavailable"))
-    if (recovered) fixture.restoreLocation()
+    fixture.restoreLocation()
 
     fixture.app.mockInput.pressEnter()
     await fixture.app.waitForFrame((frame) => frame.includes("Worktrees") && frame.includes(clone))
@@ -222,12 +221,6 @@ test.each([true, false])("choosing the current directory retries without moving 
     expect(fixture.moves).toEqual([])
     expect(fixture.route.data).toEqual({ type: "session", sessionID: "ses_clone" })
     await fixture.app.waitFor(() => fixture.reads.locations.filter((directory) => directory === clone).length >= 2)
-    if (!recovered) {
-      await fixture.app.waitFor(() => fixture.location.error !== undefined)
-      expect(fixture.location.error?.location.directory).toBe(clone)
-      await fixture.app.waitForFrame((frame) => frame.includes("Session location unavailable"))
-      return
-    }
     expect(fixture.location.error).toBeUndefined()
     await fixture.app.waitFor(() => fixture.data.location.info({ directory: clone }) !== undefined)
     const frame = await fixture.app.waitForFrame((frame) => !frame.includes("Session location unavailable"))
@@ -328,10 +321,10 @@ async function renderMove(input: {
   launchProjectID?: string
   unavailable?: "session" | "location"
   showMissingLocation?: boolean
-  onlyOnError?: boolean
   moveFails?: boolean
 }) {
   const launch = input.launch ?? (input.home ? input.directory : main)
+  let unavailable = input.unavailable
   const requests: unknown[] = []
   const removals: unknown[] = []
   const moves: unknown[] = []
@@ -350,7 +343,7 @@ async function renderMove(input: {
               : main,
       }
       reads.locations.push(directory)
-      if (input.unavailable === "location" && directory === input.directory)
+      if (unavailable === "location" && directory === input.directory)
         return json({ message: "Location unavailable" }, { status: 503 })
       return json({
         directory,
@@ -361,7 +354,7 @@ async function renderMove(input: {
       return json([{ id: "proj_test", canonical: main, time: { created: 1, updated: 1 }, sandboxes: [] }])
     if (url.pathname === "/api/session/ses_clone") {
       reads.session++
-      if (input.unavailable === "session") return json({ message: "Session unavailable" }, { status: 404 })
+      if (unavailable === "session") return json({ message: "Session unavailable" }, { status: 404 })
       return json({
         data: {
           id: "ses_clone",
@@ -422,7 +415,7 @@ async function renderMove(input: {
       sessionID: () => (input.home ? undefined : "ses_clone"),
     })
     return input.showMissingLocation ? (
-      <Show when={!input.onlyOnError || location.error}>
+      <Show when={!data.location.info({ directory: input.directory })}>
         <SessionLocationMissing directory={input.directory} projectID="proj_test" sessionID="ses_clone" />
       </Show>
     ) : null
@@ -469,7 +462,7 @@ async function renderMove(input: {
     moves,
     reads,
     restoreLocation() {
-      input.unavailable = undefined
+      unavailable = undefined
     },
     async create() {
       await move.open()

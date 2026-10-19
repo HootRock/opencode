@@ -6,9 +6,7 @@ import { ServerConnection, useServers } from "@/runtime/server/registry"
 import { useGlobal } from "@/runtime/server/runtime"
 import { useLayout } from "@/shell/state/layout"
 import { useTabs } from "@/shell/tabs/tabs"
-import { homeProjectDirectories } from "@/shell/layout/helpers"
-import { addProjects } from "@/home/projects/add"
-import { useDirectoryPicker } from "@/workspaces/selection/picker"
+import { createProjectAdder, useProjectPicker } from "@/home/projects/add"
 import { useCommand } from "./command"
 
 export function ProjectCommands() {
@@ -19,7 +17,16 @@ export function ProjectCommands() {
   const layout = useLayout()
   const tabs = useTabs()
   const navigate = useNavigate()
-  const pickDirectory = useDirectoryPicker()
+
+  const choose = useProjectPicker(
+    createProjectAdder(
+      (conn) => global.ensureServerCtx(conn),
+      (selection) => {
+        layout.home.setSelection(selection)
+        navigate("/")
+      },
+    ),
+  )
 
   const connection = createMemo(() => {
     const route = layout.route()
@@ -47,18 +54,7 @@ export function ProjectCommands() {
         const conn = connection()
 
         if (!conn) return
-        pickDirectory({
-          server: conn,
-          title: language.t("command.project.open"),
-          multiple: true,
-          onSelect: (result) => {
-            const directory = addProjects(global.ensureServerCtx(conn), homeProjectDirectories(result))
-
-            if (!directory) return
-            layout.home.setSelection({ server: ServerConnection.key(conn), directory })
-            navigate("/")
-          },
-        })
+        choose(conn)
       },
     },
   ])

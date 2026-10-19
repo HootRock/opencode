@@ -12,6 +12,16 @@ import { it } from "./lib/effect"
 const timeout = new AIError({
   reason: new TransportError({ message: "Timed out", transport: "http", operation: "request", code: "Timeout" }),
 })
+const idle = new AIError({
+  reason: new TransportError({
+    message: "Timed out waiting for WebSocket data",
+    transport: "websocket",
+    operation: "read",
+    code: "idle-timeout",
+    phase: "receive",
+    delivery: "accepted",
+  }),
+})
 const internal = new AIError({ reason: new ProviderInternalError({ message: "internal" }) })
 
 const input = (cause: AIError) => ({
@@ -36,6 +46,35 @@ describe("SessionRunnerRetry.policy", () => {
   it.effect("stops retrying transport timeouts after three attempts", () =>
     Effect.gen(function* () {
       expect(yield* decisions(timeout, 4)).toEqual([true, true, true, false])
+    }),
+  )
+
+  it.effect("stops retrying websocket idle timeouts after three attempts", () =>
+    Effect.gen(function* () {
+      expect(yield* decisions(idle, 4)).toEqual([true, true, true, false])
+    }),
+  )
+
+  it.effect("shares the timeout allowance across HTTP and websocket attempts", () =>
+    Effect.gen(function* () {
+      const policy = yield* SessionRunnerRetry.policy(SessionSchema.ID.make("ses_retry"))
+      const results: boolean[] = []
+      for (const cause of [timeout, idle, internal, idle, timeout]) results.push((yield* policy(input(cause))).retry)
+      expect(results).toEqual([true, true, true, true, false])
+    }),
+  )
+
+  it.effect("keeps websocket connection failures on the general allowance", () =>
+    Effect.gen(function* () {
+      const cause = new AIError({
+        reason: new TransportError({
+          message: "WebSocket connection failed",
+          transport: "websocket",
+          operation: "request",
+          code: "connect-failed",
+        }),
+      })
+      expect(yield* decisions(cause, 11)).toEqual([...Array(10).fill(true), false])
     }),
   )
 

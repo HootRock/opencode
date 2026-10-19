@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
+import { Show } from "solid-js"
 import { InputRenderable, TextareaRenderable } from "@opentui/core"
 import { testRender } from "@opentui/solid"
 import { usePromptMove } from "../../../src/component/prompt/move"
@@ -196,6 +197,46 @@ test("choosing a directory recovers the session when its location is unavailable
   }
 })
 
+test.each([true, false])("choosing the current directory retries without moving (recovered=%s)", async (recovered) => {
+  const fixture = await renderMove({
+    directory: clone,
+    unavailable: "location",
+    showMissingLocation: true,
+    onlyOnError: true,
+  })
+  try {
+    fixture.location.set({ directory: clone })
+    await fixture.app.waitFor(() => fixture.location.error !== undefined)
+    await fixture.app.waitForFrame((frame) => frame.includes("Session location unavailable"))
+    if (recovered) fixture.restoreLocation()
+
+    fixture.app.mockInput.pressEnter()
+    await fixture.app.waitForFrame((frame) => frame.includes("Worktrees") && frame.includes(clone))
+    await fixture.app.waitFor(() => fixture.app.renderer.currentFocusedEditor instanceof InputRenderable)
+    await fixture.app.mockInput.typeText("other-clone")
+    await fixture.app.waitForFrame((frame) => frame.includes(clone) && !frame.includes(linked))
+    const reads = fixture.reads.locations.length
+    fixture.app.mockInput.pressEnter()
+    await fixture.app.waitFor(() => fixture.moves.length > 0 || fixture.reads.locations.length > reads)
+
+    expect(fixture.moves).toEqual([])
+    expect(fixture.route.data).toEqual({ type: "session", sessionID: "ses_clone" })
+    await fixture.app.waitFor(() => fixture.reads.locations.filter((directory) => directory === clone).length >= 2)
+    if (!recovered) {
+      await fixture.app.waitFor(() => fixture.location.error !== undefined)
+      expect(fixture.location.error?.location.directory).toBe(clone)
+      await fixture.app.waitForFrame((frame) => frame.includes("Session location unavailable"))
+      return
+    }
+    expect(fixture.location.error).toBeUndefined()
+    await fixture.app.waitFor(() => fixture.data.location.info({ directory: clone }) !== undefined)
+    const frame = await fixture.app.waitForFrame((frame) => !frame.includes("Session location unavailable"))
+    expect(frame).not.toContain("Session location unavailable")
+  } finally {
+    fixture.app.renderer.destroy()
+  }
+})
+
 test("creating a worktree recovers the session without reading its removed location", async () => {
   const fixture = await renderMove({ directory: clone, unavailable: "location", showMissingLocation: true })
   try {
@@ -287,6 +328,7 @@ async function renderMove(input: {
   launchProjectID?: string
   unavailable?: "session" | "location"
   showMissingLocation?: boolean
+  onlyOnError?: boolean
   moveFails?: boolean
 }) {
   const launch = input.launch ?? (input.home ? input.directory : main)
@@ -380,7 +422,9 @@ async function renderMove(input: {
       sessionID: () => (input.home ? undefined : "ses_clone"),
     })
     return input.showMissingLocation ? (
-      <SessionLocationMissing directory={input.directory} projectID="proj_test" sessionID="ses_clone" />
+      <Show when={!input.onlyOnError || location.error}>
+        <SessionLocationMissing directory={input.directory} projectID="proj_test" sessionID="ses_clone" />
+      </Show>
     ) : null
   }
 
@@ -424,6 +468,9 @@ async function renderMove(input: {
     removals,
     moves,
     reads,
+    restoreLocation() {
+      input.unavailable = undefined
+    },
     async create() {
       await move.open()
       const frame = await app.waitForFrame(

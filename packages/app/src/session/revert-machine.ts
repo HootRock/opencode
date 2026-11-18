@@ -22,7 +22,7 @@ export type RevertEcho = string | undefined
 
 export type SessionRevertOperation =
   /** An undelivered prompt has no history to rewind, so it is withdrawn from the inbox instead. */
-  | { readonly type: "withdraw"; readonly message: SessionMessageUser }
+  | { readonly type: "withdraw"; readonly message: SessionMessageUser; readonly prior: string | undefined }
   | { readonly type: "rewind"; readonly message: SessionMessageUser; readonly prior: string | undefined }
   | { readonly type: "redo" }
   /** The Rewound toast's Undo: restage the earlier boundary and put the draft from before the rewind back. */
@@ -70,6 +70,7 @@ export type SessionRevertEvent =
   | ({ readonly type: "undo.requested"; readonly revertMessageID: string | undefined } & RevertMessages)
   | { readonly type: "redo.requested"; readonly revertMessageID: string | undefined }
   | { readonly type: "toast.undo"; readonly attempt: number }
+  | { readonly type: "withdraw.delivered"; readonly attempt: number }
   | ({ readonly type: "withdraw.succeeded"; readonly attempt: number; readonly prompt: Prompt } & RevertMessages)
   | ({
       readonly type: "rewind.succeeded"
@@ -138,6 +139,17 @@ export function transitionSessionRevert(state: SessionRevertState, event: Sessio
     if (state.status !== "restored" || event.attempt !== state.attempt) return unchanged(state)
 
     return start(state, { type: "undo-rewind", prior: state.prior, draft: state.draft })
+  }
+
+  if (event.type === "withdraw.delivered") {
+    if (state.status !== "running" || state.attempt !== event.attempt || state.operation.type !== "withdraw")
+      return unchanged(state)
+
+    return changed({
+      ...state,
+      operation: { ...state.operation, type: "rewind" },
+      echoes: [...state.echoes, state.operation.message.id],
+    })
   }
 
   if (event.type === "withdraw.succeeded") {
@@ -286,7 +298,7 @@ function rewindOrWithdraw(
   inboxIDs: ReadonlySet<string>,
   prior: string | undefined,
 ): SessionRevertOperation {
-  if (inboxIDs.has(message.id)) return { type: "withdraw", message }
+  if (inboxIDs.has(message.id)) return { type: "withdraw", message, prior }
 
   return { type: "rewind", message, prior }
 }

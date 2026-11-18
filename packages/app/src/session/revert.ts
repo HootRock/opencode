@@ -1,4 +1,4 @@
-import type { SessionMessageUser } from "@opencode/client/promise"
+import { isMessageNotFoundError, type SessionMessageUser } from "@opencode/client/promise"
 import { toaster } from "@opencode/ui/toast"
 import { createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { useComposerState } from "@/composer/persistence"
@@ -237,6 +237,23 @@ export function createSessionRevert(input: {
       const restored = await pinPromptMedia(messageDraft(operation.message, target.directory))
       signal.throwIfAborted()
       await server.api.session.inbox.cancel({ sessionID, inboxID: operation.message.id }, { signal })
+
+      // Cancellation is an idempotent no-op once delivery won the race. Confirm that the message is gone before
+      // restoring it; a delivered turn must go through the same interrupt/wait/rewind as any other sent prompt.
+      const delivered = await server.api.session.message
+        .get({ sessionID, messageID: operation.message.id }, { signal })
+        .then(
+          () => true,
+          (error: unknown) => {
+            if (isMessageNotFoundError(error)) return false
+            throw error
+          },
+        )
+      signal.throwIfAborted()
+      if (delivered) {
+        dispatch(sessionID, { type: "withdraw.delivered", attempt })
+        return execute(sessionID, attempt, { ...operation, type: "rewind" }, target, signal)
+      }
 
       return { type: "withdraw.succeeded", attempt, prompt: restored, ...snapshot(sessionID) }
     }

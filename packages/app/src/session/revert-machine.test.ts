@@ -363,3 +363,23 @@ describe("selectCursorAfterRevert", () => {
     expect(selectCursorAfterRevert({ messages, inboxIDs: new Set(["msg_3"]) }, undefined)).toBe("msg_2")
   })
 })
+
+test("a delivered withdrawal keeps its attempt and registers the rewind echo", () => {
+  const pending = transitionSessionRevert(createSessionRevertState(), undo(undefined, new Set([m3.id])))
+  const delivered = transitionSessionRevert(pending.state, {
+    type: "withdraw.delivered",
+    attempt: pending.state.attempt,
+  })
+  expect(delivered.state).toMatchObject({
+    status: "running",
+    attempt: pending.state.attempt,
+    operation: { type: "rewind", message: m3, prior: undefined },
+    echoes: [m3.id],
+  })
+  expect(delivered.effects).toEqual([])
+  expect(transitionSessionRevert(pending.state, { type: "withdraw.delivered", attempt: 0 }).state).toBe(pending.state)
+  const echo = transitionSessionRevert(delivered.state, { type: "revert.staged", messageID: m3.id })
+  const settled = transitionSessionRevert(echo.state, rewound(pending.state.attempt, "earlier draft"))
+  expect(settled.state).toMatchObject({ status: "restored", boundary: m3.id, echoes: [] })
+  expect(settled.effects).toContainEqual({ type: "draft.restoreMessage", message: m3 })
+})
